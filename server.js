@@ -1,3 +1,7 @@
+// Добавляем полифил для fetch
+global.Headers = require('node-fetch').Headers;
+global.fetch = require('node-fetch');
+
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
@@ -67,6 +71,8 @@ async function checkTRC20Deposits(addressRecord) {
   const { user_id, address } = addressRecord;
   
   try {
+    console.log(`🔍 Checking TRC20 for ${address}`);
+    
     const response = await axios.get(
       `https://api.trongrid.io/v1/accounts/${address}/transactions/trc20`,
       {
@@ -83,6 +89,7 @@ async function checkTRC20Deposits(addressRecord) {
     );
 
     const transactions = response.data.data || [];
+    console.log(`📊 Found ${transactions.length} TRC20 transactions`);
     
     for (const tx of transactions) {
       // Проверяем что это USDT и получаем на наш адрес
@@ -91,6 +98,8 @@ async function checkTRC20Deposits(addressRecord) {
           tx.type === 'Transfer') {
         
         const amount = parseFloat(tx.value) / 1000000; // USDT 6 decimals
+        
+        console.log(`💰 TRC20: ${amount} USDT to ${address}`);
         
         if (amount >= 17) {
           await processDeposit(user_id, address, amount, tx.transaction_id, 'trc20');
@@ -107,20 +116,28 @@ async function checkBEP20Deposits(addressRecord) {
   const { user_id, address } = addressRecord;
   
   try {
+    console.log(`🔍 Checking BEP20 for ${address}`);
+    
     const response = await axios.get(
       `https://api.bscscan.com/api?module=account&action=tokentx&address=${address}&page=1&offset=20&sort=desc&apikey=${BSCSCAN_API_KEY}`,
       { timeout: 10000 }
     );
 
-    if (response.data.status !== '1') return;
+    if (response.data.status !== '1') {
+      console.log('📭 No BEP20 transactions');
+      return;
+    }
     
     const transactions = response.data.result || [];
+    console.log(`📊 Found ${transactions.length} BEP20 transactions`);
     
     for (const tx of transactions) {
       if (tx.contractAddress.toLowerCase() === USDT_CONTRACTS.bep20.toLowerCase() && 
           tx.to.toLowerCase() === address.toLowerCase()) {
         
         const amount = parseFloat(tx.value) / 1000000000000000000; // USDT 18 decimals
+        
+        console.log(`💰 BEP20: ${amount} USDT to ${address}`);
         
         if (amount >= 17) {
           await processDeposit(user_id, address, amount, tx.hash, 'bep20');
@@ -135,7 +152,7 @@ async function checkBEP20Deposits(addressRecord) {
 // Обработка депозита
 async function processDeposit(user_id, address, amount, tx_hash, network) {
   try {
-    console.log(`💰 Found deposit: ${amount} USDT to ${address}`);
+    console.log(`💰 Processing deposit: ${amount} USDT to ${address}, TX: ${tx_hash}`);
 
     // Проверяем дубликаты
     const { data: existing } = await supabase
@@ -145,7 +162,7 @@ async function processDeposit(user_id, address, amount, tx_hash, network) {
       .single();
 
     if (existing) {
-      console.log('⚠️ Already processed');
+      console.log('⚠️ Transaction already processed');
       return;
     }
 
@@ -161,23 +178,35 @@ async function processDeposit(user_id, address, amount, tx_hash, network) {
         status: 'confirmed'
       });
 
-    if (depositError) throw depositError;
+    if (depositError) {
+      console.error('❌ Deposit save error:', depositError);
+      return;
+    }
 
     // Обновляем баланс
-    const { data: user } = await supabase
+    const { data: user, error: userError } = await supabase
       .from('users')
       .select('balance')
       .eq('id', user_id)
       .single();
 
-    const newBalance = (parseFloat(user?.balance) || 0) + amount;
+    if (userError) {
+      console.error('❌ User fetch error:', userError);
+      return;
+    }
+
+    const currentBalance = parseFloat(user?.balance) || 0;
+    const newBalance = currentBalance + amount;
     
     const { error: balanceError } = await supabase
       .from('users')
       .update({ balance: newBalance })
       .eq('id', user_id);
 
-    if (balanceError) throw balanceError;
+    if (balanceError) {
+      console.error('❌ Balance update error:', balanceError);
+      return;
+    }
 
     console.log(`✅ Deposit processed: ${amount} USDT for user ${user_id}, new balance: ${newBalance}`);
 
@@ -196,12 +225,22 @@ app.get('/health', (req, res) => {
 });
 
 // Запуск сервера
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Deposit monitor started on port ${PORT}`);
+  console.log(`⏰ Starting monitoring service...`);
   
-  // Первая проверка через 5 секунд
-  setTimeout(checkDeposits, 5000);
+  // Первая проверка через 3 секунды
+  setTimeout(checkDeposits, 3000);
   
   // Периодическая проверка каждые 30 секунд
   setInterval(checkDeposits, 30000);
+});
+
+// Обработка ошибок
+process.on('uncaughtException', (error) => {
+  console.error('🚨 Uncaught Exception:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
 });
