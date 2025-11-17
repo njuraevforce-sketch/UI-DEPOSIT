@@ -1,262 +1,218 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
-const QRCode = require('qrcode');
-const cors = require('cors');
 const TronWeb = require('tronweb');
-const { ethers } = require('ethers');
-const crypto = require('crypto');
+const axios = require('axios');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 
-console.log('🚀 STARTING SERVER WITH SECURE PRIVATE KEY STORAGE...');
-
-// ВШИТЫЕ КЛЮЧИ
+// Конфигурация
 const supabaseUrl = 'https://pjyuagmvrhnepomqfxcc.supabase.co';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBqeXVhZ212cmhwZXBvbXFmeHhjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MzE1MjQxMywiZXhwIjoyMDc4NzI4NDEzfQ.cRJ9xx3wganoJQldTL3hbY8OSTIV_XR6f9EIZT4fsac';
-
-console.log('📦 Creating Supabase client...');
 const supabase = createClient(supabaseUrl, supabaseKey);
-console.log('✅ Supabase client created');
 
-// TronWeb конфигурация
 const tronWeb = new TronWeb({
-    fullHost: 'https://api.trongrid.io',
-    headers: { 'TRON-PRO-API-KEY': '8fa63ef4-f010-4ad2-a556-a7124563bafd' }
+  fullHost: 'https://api.trongrid.io',
+  headers: { 'TRON-PRO-API-KEY': '8fa63ef4-f010-4ad2-a556-a7124563bafd' }
 });
 
-app.use(cors());
-app.use(express.json());
+// USDT TRC20 контракт
+const USDT_TRC20_CONTRACT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
 
-// Функция для шифрования приватного ключа (опционально)
-function encryptPrivateKey(privateKey, userId) {
-    // В реальной системе используй сложное шифрование
-    // Здесь простой пример - в продакшене заменить на AES
-    return Buffer.from(`${privateKey}:${userId}`).toString('base64');
+// Функция для проверки транзакций
+async function checkDeposits() {
+  console.log('🔍 Checking for new deposits...');
+  
+  try {
+    // Получаем все активные адреса для отслеживания
+    const { data: addresses, error } = await supabase
+      .from('user_deposit_addresses')
+      .select('*')
+      .eq('is_active', true);
+
+    if (error) throw error;
+
+    for (const addressRecord of addresses) {
+      await checkAddressTransactions(addressRecord);
+    }
+  } catch (error) {
+    console.error('❌ Error checking deposits:', error);
+  }
 }
 
-// Генерация реальных адресов с сохранением приватных ключей
-async function generateRealWalletAddress(network, userId) {
-    try {
-        console.log(`🔑 Generating REAL ${network} wallet for user ${userId}`);
-        
-        if (network === 'trc20') {
-            // Генерируем TRC20 адрес (Tron)
-            const account = await tronWeb.createAccount();
-            console.log(`✅ Generated TRC20 address: ${account.address.base58}`);
-            
-            return {
-                address: account.address.base58,
-                privateKey: account.privateKey
-            };
-        } else if (network === 'bep20') {
-            // Генерируем BEP20 адрес (Ethereum/BSC)
-            const wallet = ethers.Wallet.createRandom();
-            console.log(`✅ Generated BEP20 address: ${wallet.address}`);
-            
-            return {
-                address: wallet.address,
-                privateKey: wallet.privateKey
-            };
-        }
-    } catch (error) {
-        console.error('❌ Error generating wallet:', error);
-        throw error;
+// Проверяем транзакции для конкретного адреса
+async function checkAddressTransactions(addressRecord) {
+  try {
+    const { user_id, address, network, last_checked_block } = addressRecord;
+    
+    if (network === 'trc20') {
+      await checkTRC20Transactions(user_id, address, last_checked_block);
+    } else if (network === 'bep20') {
+      await checkBEP20Transactions(user_id, address, last_checked_block);
     }
+  } catch (error) {
+    console.error(`❌ Error checking transactions for address ${addressRecord.address}:`, error);
+  }
 }
 
-// Health check
-app.get('/', (req, res) => {
-    console.log('✅ Health check received');
-    res.json({ 
-        status: 'OK', 
-        service: 'UI Deposit Server - SECURE KEY STORAGE',
-        timestamp: new Date().toISOString()
-    });
-});
-
-// Генерация реального адреса с сохранением в БД
-app.get('/api/deposit/generate', async (req, res) => {
-    try {
-        const { user_id, network } = req.query;
-        console.log(`📥 Generate SECURE address request: ${user_id}, ${network}`);
+// Проверяем TRC20 транзакции
+async function checkTRC20Transactions(user_id, address, lastBlock = 0) {
+  try {
+    console.log(`🔍 Checking TRC20 transactions for ${address}`);
+    
+    const transactions = await tronWeb.trx.getTransactionInfo(address);
+    
+    for (const tx of transactions) {
+      // Пропускаем уже обработанные транзакции
+      if (tx.blockNumber <= lastBlock) continue;
+      
+      // Проверяем, что это USDT транзакция
+      if (tx.contract_address === USDT_TRC20_CONTRACT && tx.result === 'SUCCESS') {
+        const amount = tx.amount / 1000000; // Конвертируем из sun to USDT
         
-        if (!user_id || !network) {
-            return res.json({ success: false, error: 'Missing parameters' });
+        // Проверяем минимальный депозит
+        if (amount >= 17) {
+          await processDeposit(user_id, address, amount, tx.txID, 'trc20');
         }
-
-        // Проверяем, есть ли уже адрес для этого пользователя и сети
-        const { data: existingAddress } = await supabase
-            .from('deposit_addresses')
-            .select('address, private_key')
-            .eq('user_id', user_id)
-            .eq('network', network)
-            .single();
-
-        if (existingAddress) {
-            console.log(`♻️ Using existing ${network} address for user ${user_id}`);
-            
-            const qrCode = await QRCode.toDataURL(existingAddress.address);
-            
-            return res.json({
-                success: true,
-                address: existingAddress.address,
-                qr_code: qrCode,
-                network: network,
-                from_cache: true
-            });
-        }
-
-        // Генерируем новый адрес
-        const wallet = await generateRealWalletAddress(network, user_id);
-        const qrCode = await QRCode.toDataURL(wallet.address);
-        
-        // Сохраняем в базу с приватным ключом
-        const { error } = await supabase
-            .from('deposit_addresses')
-            .insert({
-                user_id: user_id,
-                network: network,
-                address: wallet.address,
-                private_key: wallet.privateKey, // Сохраняем приватный ключ
-                created_at: new Date().toISOString()
-            });
-
-        if (error) {
-            console.error('❌ Database error:', error);
-            throw error;
-        }
-
-        console.log(`✅ Real ${network} address saved to DB for user ${user_id}`);
-        
-        res.json({
-            success: true,
-            address: wallet.address,
-            qr_code: qrCode,
-            network: network,
-            from_cache: false
-        });
-        
-    } catch (error) {
-        console.error('❌ Generate address error:', error);
-        res.status(500).json({ success: false, error: error.message });
+      }
     }
-});
-
-// История депозитов из deposit_transactions
-app.get('/api/deposit/history', async (req, res) => {
-    try {
-        const { user_id, network } = req.query;
-        console.log(`📥 History request: ${user_id}, ${network}`);
-        
-        if (!user_id) {
-            return res.json({ success: false, error: 'Missing user_id' });
-        }
-
-        let query = supabase
-            .from('deposit_transactions')
-            .select('*')
-            .eq('user_id', user_id)
-            .order('created_at', { ascending: false })
-            .limit(50);
-
-        if (network) {
-            query = query.eq('network', network);
-        }
-
-        const { data, error } = await query;
-
-        if (error) throw error;
-        
-        res.json({
-            success: true,
-            deposits: data || []
-        });
-        
-    } catch (error) {
-        console.error('❌ History error:', error);
-        res.json({ success: false, error: error.message });
+    
+    // Обновляем последний проверенный блок
+    if (transactions.length > 0) {
+      const latestBlock = Math.max(...transactions.map(tx => tx.blockNumber));
+      await supabase
+        .from('user_deposit_addresses')
+        .update({ last_checked_block: latestBlock })
+        .eq('address', address);
     }
-});
+  } catch (error) {
+    console.error('❌ TRC20 transaction check error:', error);
+  }
+}
 
-// Получение баланса пользователя
-app.get('/api/user/balance', async (req, res) => {
-    try {
-        const { user_id } = req.query;
+// Проверяем BEP20 транзакции (через BscScan API)
+async function checkBEP20Transactions(user_id, address, lastBlock = 0) {
+  try {
+    console.log(`🔍 Checking BEP20 transactions for ${address}`);
+    
+    const apiKey = 'HIQGABWWJ77G9B42SZ92HV2QYA7JVGC125';
+    const url = `https://api.bscscan.com/api?module=account&action=tokentx&address=${address}&page=1&offset=100&sort=desc&apikey=${apiKey}`;
+    
+    const response = await axios.get(url);
+    const transactions = response.data.result;
+    
+    for (const tx of transactions) {
+      if (parseInt(tx.blockNumber) <= lastBlock) continue;
+      
+      // USDT BEP20 контракт
+      if (tx.contractAddress.toLowerCase() === '0x55d398326f99059ff775485246999027b3197955' && 
+          tx.to.toLowerCase() === address.toLowerCase()) {
         
-        if (!user_id) {
-            return res.json({ success: false, error: 'Missing user_id' });
+        const amount = parseFloat(tx.value) / 1000000000000000000; // Конвертируем из wei
+        
+        if (amount >= 17) {
+          await processDeposit(user_id, address, amount, tx.hash, 'bep20');
         }
-
-        const { data: user, error } = await supabase
-            .from('users')
-            .select('balance')
-            .eq('id', user_id)
-            .single();
-
-        if (error) throw error;
-        
-        res.json({
-            success: true,
-            balance: user?.balance || 0
-        });
-        
-    } catch (error) {
-        console.error('❌ Balance error:', error);
-        res.json({ success: false, error: error.message });
+      }
     }
-});
-
-// Health check
-app.get('/api/health', (req, res) => {
-    res.json({ 
-        status: 'OK', 
-        message: 'Server with secure key storage is running',
-        timestamp: new Date().toISOString()
-    });
-});
-
-// Эндпоинт для вывода средств (будет использоваться позже)
-app.post('/api/withdraw/request', async (req, res) => {
-    try {
-        const { user_id, amount, network, address } = req.body;
-        console.log(`📥 Withdraw request: ${user_id}, ${amount} USDT to ${address} on ${network}`);
-        
-        // Здесь будет логика вывода средств
-        // Пока просто сохраняем запрос
-        
-        const { error } = await supabase
-            .from('withdrawal_requests')
-            .insert({
-                user_id: user_id,
-                amount: amount,
-                fee: 1.0, // Пример комиссии
-                network: network,
-                address: address,
-                status: 'pending',
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
-            });
-
-        if (error) throw error;
-        
-        res.json({
-            success: true,
-            message: 'Withdrawal request submitted for processing'
-        });
-        
-    } catch (error) {
-        console.error('❌ Withdraw error:', error);
-        res.status(500).json({ success: false, error: error.message });
+    
+    // Обновляем последний проверенный блок
+    if (transactions.length > 0) {
+      const latestBlock = Math.max(...transactions.map(tx => parseInt(tx.blockNumber)));
+      await supabase
+        .from('user_deposit_addresses')
+        .update({ last_checked_block: latestBlock })
+        .eq('address', address);
     }
+  } catch (error) {
+    console.error('❌ BEP20 transaction check error:', error);
+  }
+}
+
+// Обрабатываем найденный депозит
+async function processDeposit(user_id, address, amount, tx_hash, network) {
+  try {
+    console.log(`💰 New deposit detected: ${amount} USDT to ${address}`);
+    
+    // Проверяем, не обрабатывали ли мы уже эту транзакцию
+    const { data: existing } = await supabase
+      .from('deposits')
+      .select('id')
+      .eq('tx_hash', tx_hash)
+      .single();
+    
+    if (existing) {
+      console.log('⚠️ Transaction already processed');
+      return;
+    }
+    
+    // Добавляем запись о депозите
+    const { data: deposit, error } = await supabase
+      .from('deposits')
+      .insert([
+        {
+          user_id: user_id,
+          address: address,
+          amount: amount,
+          tx_hash: tx_hash,
+          network: network,
+          status: 'confirmed'
+        }
+      ])
+      .select()
+      .single();
+    
+    if (error) throw error;
+    
+    // Обновляем баланс пользователя
+    await updateUserBalance(user_id, amount);
+    
+    console.log(`✅ Deposit processed successfully: ${amount} USDT for user ${user_id}`);
+    
+  } catch (error) {
+    console.error('❌ Error processing deposit:', error);
+  }
+}
+
+// Обновляем баланс пользователя
+async function updateUserBalance(user_id, amount) {
+  try {
+    // Получаем текущий баланс
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('balance')
+      .eq('id', user_id)
+      .single();
+    
+    if (error) throw error;
+    
+    const newBalance = (user.balance || 0) + amount;
+    
+    // Обновляем баланс
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ balance: newBalance })
+      .eq('id', user_id);
+    
+    if (updateError) throw updateError;
+    
+    console.log(`🔄 Balance updated: ${newBalance} USDT for user ${user_id}`);
+    
+  } catch (error) {
+    console.error('❌ Error updating user balance:', error);
+  }
+}
+
+// Запускаем проверку каждые 30 секунд
+setInterval(checkDeposits, 30000);
+
+// Первая проверка при запуске
+checkDeposits();
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', service: 'deposit-monitor' });
 });
 
-// Запуск сервера
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`✅ SECURE WALLET SERVER RUNNING ON PORT ${PORT}`);
-    console.log(`📍 URL: https://ui-deposit-production.up.railway.app`);
-    console.log('🔐 Private keys are stored securely in database');
-    console.log('💰 Generating REAL TRC20/BEP20 addresses with key storage');
+app.listen(PORT, () => {
+  console.log(`🚀 Deposit monitor running on port ${PORT}`);
 });
-
-console.log('📡 Secure wallet server setup complete');
