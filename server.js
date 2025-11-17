@@ -6,9 +6,11 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Supabase клиент
+// ВШИТЫЕ КЛЮЧИ - НЕ МЕНЯТЬ!
 const supabaseUrl = 'https://pjyuagmvrhnepomqfxcc.supabase.co';
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBqeXVhZ212cmhwZXBvbXFmeHhjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MzE1MjQxMywiZXhwIjoyMDc4NzI4NDEzfQ.cRJ9xx3wganoJQldTL3hbY8OSTIV_XR6f9EIZT4fsac';
+
+console.log('✅ Using hardcoded Supabase keys');
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 app.use(cors());
@@ -140,34 +142,7 @@ app.get('/api/deposit/history', async (req, res) => {
     }
 });
 
-// Эндпоинт для проверки статуса депозита
-app.get('/api/deposit/check/:tx_hash', async (req, res) => {
-    try {
-        const { tx_hash } = req.params;
-
-        const { data, error } = await supabase
-            .from('deposits')
-            .select('*')
-            .eq('tx_hash', tx_hash)
-            .single();
-
-        if (error) throw error;
-        
-        res.json({
-            success: true,
-            deposit: data
-        });
-        
-    } catch (error) {
-        console.error('Check deposit error:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
 app.listen(PORT, () => {
     console.log(`🚀 UI Deposit Server running on port ${PORT}`);
-    console.log(`📝 Endpoints:`);
-    console.log(`   • GET  /api/deposit/generate?user_id=XXX&network=trc20`);
-    console.log(`   • POST /api/deposit/save-address`);
-    console.log(`   • GET  /api/deposit/history?user_id=XXX`);
+    console.log(`✅ Hardcoded keys loaded successfully`);
 });
