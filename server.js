@@ -1,9 +1,10 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const TronWeb = require('tronweb');
-const Web3 = require('web3');
+const { Web3 } = require('web3');
 const axios = require('axios');
 const cron = require('node-cron');
+const { ethers } = require('ethers');
 
 const app = express();
 app.use(express.json());
@@ -19,7 +20,8 @@ const tronWeb = new TronWeb({
   headers: { "TRON-PRO-API-KEY": '8fa63ef4-f010-4ad2-a556-a7124563bafd' }
 });
 
-const bscWeb3 = new Web3('https://bsc-dataseed.binance.org/');
+// BSC провайдер с использованием ethers.js (более стабильный)
+const bscProvider = new ethers.JsonRpcProvider('https://bsc-dataseed.binance.org/');
 
 // USDT контракты
 const TRC20_USDT_CONTRACT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
@@ -62,10 +64,10 @@ async function generateWalletAddress(userId, network) {
       address = account.address.base58;
       privateKey = account.privateKey;
     } else if (network === 'bep20') {
-      // Генерация BEP20 адреса
-      const account = bscWeb3.eth.accounts.create();
-      address = account.address;
-      privateKey = account.privateKey;
+      // Генерация BEP20 адреса с использованием ethers.js
+      const wallet = ethers.Wallet.createRandom();
+      address = wallet.address;
+      privateKey = wallet.privateKey;
     }
 
     // Сохраняем в базу данных
@@ -463,7 +465,7 @@ app.get('/health', (req, res) => {
     status: 'OK', 
     timestamp: new Date().toISOString(),
     service: 'Uipath Deposit Server',
-    version: '2.0'
+    version: '3.0'
   });
 });
 
