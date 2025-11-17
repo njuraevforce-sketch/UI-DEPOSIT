@@ -1,7 +1,7 @@
 {
   "name": "uipath-deposit-server",
   "version": "1.0.0",
-  "description": "UiPath Deposit Main Server",
+  "description": "UiPath Deposit Server",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
