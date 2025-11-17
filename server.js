@@ -1,11 +1,19 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
-const cors = require('cors');
 
 const app = express();
 
-// Middleware
-app.use(cors());
+// CORS middleware
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 app.use(express.json());
 
 // Supabase конфигурация
@@ -15,17 +23,20 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 // Health check
 app.get('/health', (req, res) => {
+  console.log('Health check received');
   res.json({ 
     status: 'OK', 
     message: 'Uipath Deposit Server is running',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    version: '1.0'
   });
 });
 
-// Простой endpoint для генерации адреса
+// API endpoints
 app.get('/api/deposit/generate', async (req, res) => {
   try {
     const { user_id, network } = req.query;
+    console.log('Generate address request:', { user_id, network });
 
     if (!user_id || !network) {
       return res.status(400).json({ 
@@ -34,7 +45,6 @@ app.get('/api/deposit/generate', async (req, res) => {
       });
     }
 
-    // Генерируем тестовый адрес (в реальности здесь будет логика генерации)
     const testAddress = network === 'trc20' 
       ? 'TEst1234567890123456789012345678901234'
       : '0xTest123456789012345678901234567890123456';
@@ -45,8 +55,7 @@ app.get('/api/deposit/generate', async (req, res) => {
       success: true,
       address: testAddress,
       qr_code: qrCodeUrl,
-      network: network,
-      message: 'Test address generated successfully'
+      network: network
     });
 
   } catch (error) {
@@ -55,11 +64,10 @@ app.get('/api/deposit/generate', async (req, res) => {
   }
 });
 
-// История депозитов
 app.get('/api/deposit/history', async (req, res) => {
   try {
     const { user_id, network } = req.query;
-
+    
     if (!user_id) {
       return res.status(400).json({
         success: false,
@@ -67,11 +75,9 @@ app.get('/api/deposit/history', async (req, res) => {
       });
     }
 
-    // Возвращаем тестовые данные
     res.json({
       success: true,
-      deposits: [],
-      message: 'No deposits yet'
+      deposits: []
     });
 
   } catch (error) {
@@ -80,8 +86,20 @@ app.get('/api/deposit/history', async (req, res) => {
   }
 });
 
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Uipath Deposit Server',
+    endpoints: {
+      health: '/health',
+      generate: '/api/deposit/generate?user_id=XXX&network=trc20|bep20',
+      history: '/api/deposit/history?user_id=XXX'
+    }
+  });
+});
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Uipath Deposit Server running on port ${PORT}`);
-  console.log(`🔗 Health check: https://ui-deposit-production.up.railway.app/health`);
+  console.log(`🔗 Health: http://0.0.0.0:${PORT}/health`);
 });
