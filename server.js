@@ -5,7 +5,7 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 
 // Конфигурация
-const SUPABASE_URL = 'https://pjyuagmvrhnepomqfxcc.supabase.co';
+const SUPABASE_URL = 'https://pjyuagmvrhpepomqfxxc.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBqeXVhZ212cmhwZXBvbXFmeHhjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MzE1MjQxMywiZXhwIjoyMDc4NzI4NDEzfQ.cRJ9xx3wganoJQldTL3hbY8OSTIV_XR6f9EIZT4fsac';
 
 const TRONGRID_API_KEY = '8fa63ef4-f010-4ad2-a556-a7124563bafd';
